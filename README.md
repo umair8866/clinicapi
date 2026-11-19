@@ -1,6 +1,6 @@
 # Clinic Visits & Billing
 
-Implementation is incremental. Core models, factories, Policies and active-account/bearer-token checks are implemented. Business endpoints, accounting services, bulk seeding, transfers and reports remain pending. Migrations have not been executed by the agent.
+Implementation is incremental. Core models, factories, Policies, active-account/bearer-token checks and the resumable synthetic seed command are implemented. Business endpoints, accounting services, transfers and reports remain pending. Migrations have not been executed by the agent.
 
 ## API contract
 
@@ -16,7 +16,32 @@ Implementation is incremental. Core models, factories, Policies and active-accou
 
 `php artisan test --compact tests/Feature/AccessFoundationTest.php` runs without migrations or database writes. BranchIsolationTest uses RefreshDatabase: run it only after manually configuring an isolated MariaDB test database; the scaffold's current SQLite configuration is not suitable for these migrations. Database-backed verification remains pending.
 
-The bulk `data:seed` command is not implemented yet. It must commit generated batches and checkpoints in the same transaction, resume from the last committed batch, freeze its seed/configuration/date range, reject parameter changes and concurrent runs, and report completion only after reconciliation. Factories are for small test fixtures, not bulk seeding. Do not run the scaffold DatabaseSeeder for assessment data.
+The `data:seed` command commits each bounded batch and its checkpoint together. Visit batches include invoices, three items per invoice, payments and all summaries. A stopped or failed run resumes from the committed checkpoint; completed runs are no-ops. The named database lock is held on the writing session, with reconnect disabled during the run. A lost process/connection releases the lock after the server detects disconnect; an uncommitted transaction rolls back. Rerun after the old connection closes.
+
+Use a dedicated, empty, offline synthetic-data database. Existing business/summary rows without a matching seed run are rejected. Do not accept application writes while seeding or validating. DatabaseSeeder intentionally creates nothing; factories serve small test fixtures only. No sample login account or credentials are created.
+
+After manually selecting the target database and running the migrations:
+
+```powershell
+php artisan data:seed --patients=1000 --visits=5000 --batch=1000
+# Optional deliberate stop after three committed batches:
+php artisan data:seed --patients=1000 --visits=5000 --batch=1000 --max-batches=3
+# Resume with identical patients/visits/batch/seed, omitting max-batches:
+php artisan data:seed --patients=1000 --visits=5000 --batch=1000
+```
+
+For the required full run, use a different empty database and run `php artisan data:seed`. Defaults: 1,000,000 patients, 5,000,000 visits, 1,000 rows/visits per batch and deterministic seed 1729. Patient/visit counts, batch size, generator version and random seed are immutable within a run. The five-year UTC range is frozen on the first invocation. Visits must be at least twice the patient count. At default volumes, 1% of patients have 50+ visits; most have 4–5. Every fifth patient visits two branches. Four payments per five visits include two payments on some invoices, partial payment, unpaid and void invoices. A final partial group preserves exactly floor(visits * 0.8) payment rows.
+
+Summary/validation work is included in measured wall time. Metrics persist phase durations, committed counts, memory, monthly distribution, patient history counts and information_schema sizes in bytes. Active timing has checkpoint precision; an abrupt kill cannot persist time spent in its rolled-back batch. Only a single-attempt run can report the under-30-minute flag. Final aggregate verification may take time after insertion reaches 100%. No throughput or database correctness claim is made until the real integration run.
+
+Seven generator unit tests run without a database: `vendor/bin/phpunit tests/Unit/ClinicSeedGeneratorTest.php`. Five integration tests cover stop/resume, rollback after summary writes, changed parameters, nonempty targets and concurrent sessions. They are not executed by the agent. To run manually, configure an isolated MySQL/MariaDB test connection/database ending in `_test` or `_tests` in phpunit.xml (replacing the SQLite scaffold settings), then:
+
+```powershell
+$env:RUN_SEED_INTEGRATION_TESTS = '1'
+php artisan test --compact tests/Feature/ClinicSeedResumeTest.php
+```
+
+These integration tests use RefreshDatabase and execute migrations. Never point them at development or production data. Actual worker-process termination and full-volume timing remain manual checks.
 
 All performance targets remain unmeasured. Laravel 13/MariaDB is the user-approved local stack; the assessment specifies Laravel 11/12 and MySQL 8.
 
