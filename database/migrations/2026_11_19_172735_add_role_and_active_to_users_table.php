@@ -1,0 +1,31 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
+
+return new class () extends Migration {
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::table('users', function (Blueprint $table) {
+            $table->string('role', 20)->default('clinic_user');
+            $table->boolean('is_active')->default(true);
+        });
+        DB::statement("ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'clinic_admin', 'clinic_user'))");
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        DB::statement('ALTER TABLE users DROP CONSTRAINT users_role_check');
+        Schema::table('users', function (Blueprint $table) {
+            $table->dropColumn(['role', 'is_active']);
+        });
+    }
+};
