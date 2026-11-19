@@ -219,10 +219,10 @@ class ClinicSeedService
         $bad = $db->selectOne("SELECT COUNT(*) AS total FROM invoices i
             JOIN visits v ON v.id = i.visit_id JOIN patients patient ON patient.id = v.patient_id
             JOIN doctors d ON d.id = v.doctor_id
-            LEFT JOIN (SELECT invoice_id, COUNT(*) AS lines, SUM(qty * unit_price_minor) AS gross FROM invoice_items WHERE invoice_id BETWEEN ? AND ? GROUP BY invoice_id) item ON item.invoice_id = i.id
+            LEFT JOIN (SELECT invoice_id, COUNT(*) AS item_count, SUM(qty * unit_price_minor) AS gross FROM invoice_items WHERE invoice_id BETWEEN ? AND ? GROUP BY invoice_id) item ON item.invoice_id = i.id
             LEFT JOIN (SELECT invoice_id, SUM(amount_minor) AS paid, MIN(paid_at) AS first_paid, MAX(paid_at) AS last_paid FROM payments WHERE invoice_id BETWEEN ? AND ? GROUP BY invoice_id) p ON p.invoice_id = i.id
             WHERE i.id BETWEEN ? AND ? AND (
-                COALESCE(item.lines, 0) <> 3 OR item.gross <> i.total_minor OR d.branch_id <> v.branch_id
+                COALESCE(item.item_count, 0) <> 3 OR item.gross <> i.total_minor OR d.branch_id <> v.branch_id
                 OR COALESCE(p.paid, 0) > i.net_minor OR (i.status = 'void' AND COALESCE(p.paid, 0) <> 0)
                 OR (i.status = 'paid' AND COALESCE(p.paid, 0) <> i.net_minor)
                 OR (i.status = 'unpaid' AND COALESCE(p.paid, 0) <> 0)
