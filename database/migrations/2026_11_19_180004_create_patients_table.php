@@ -16,6 +16,11 @@ return new class () extends Migration {
             $table->string('phone', 32)->index();
             $table->date('dob');
             $table->string('gender', 20);
+            $table->string('flat_number', 20)->nullable();
+            $table->string('building_number', 20)->nullable();
+            $table->string('road_number', 20)->nullable();
+            $table->string('block', 20)->nullable();
+            $table->string('area', 100)->nullable();
             $table->timestamps();
             $table->index(['name', 'id']);
         });
