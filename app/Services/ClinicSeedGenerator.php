@@ -8,7 +8,7 @@ use InvalidArgumentException;
 
 class ClinicSeedGenerator
 {
-    public const VERSION = 1;
+    public const VERSION = 2;
 
     private int $start;
     private int $end;
@@ -59,10 +59,16 @@ class ClinicSeedGenerator
     public function patient(int $id): array
     {
         $names = ['Ali', 'Fatima', 'Ahmed', 'Mariam', 'Hassan', 'Noor', 'Yusuf', 'Sara'];
-        return ['id' => $id, 'mrn' => sprintf('SYN%010d', $id), 'cpr' => sprintf('SYN-ID-%010d', $id),
+        $day = (($id - 1) * 7919 + $this->seed) % 33238;
+        $birthTime = strtotime('1930-01-01 UTC') + $day * 86400;
+        $suffixIndex = intdiv($id - 1, 33238) * 31 + (int) gmdate('d', $birthTime) - 1;
+        $cpr = gmdate('ym', $birthTime).sprintf('%05d', ($suffixIndex * 7919 + $this->seed) % 100000);
+        $phoneDigits = sprintf('%07d', crc32($this->seed.':phone:'.$id) % 10000000);
+
+        return ['id' => $id, 'mrn' => sprintf('SYN%010d', $id), 'cpr' => $cpr,
             'name' => $names[($id - 1) % 8].' Synthetic '.$id,
-            'phone' => '+973'.sprintf('%08d', 30000000 + $id % 9999999),
-            'dob' => gmdate('Y-m-d', strtotime('1940-01-01 UTC') + ($id % 20000) * 86400),
+            'phone' => '+9733'.$phoneDigits,
+            'dob' => gmdate('Y-m-d', $birthTime),
             'gender' => $id % 2 === 0 ? 'female' : 'male',
             'created_at' => $this->rangeStart, 'updated_at' => $this->rangeStart];
     }

@@ -14,9 +14,13 @@ use Throwable;
 class ImportPatients implements ShouldQueue
 {
     use Queueable;
+
     public int $timeout = 3600;
+
     public int $tries = 5;
-    public array $backoff = [30,60,120,240];
+
+    public array $backoff = [30, 60, 120, 240];
+
     public function __construct(public int $importId)
     {
     }
@@ -29,7 +33,7 @@ class ImportPatients implements ShouldQueue
         if (!$import->user?->is_active || $import->user->role !== UserRole::Admin) {
             throw new RuntimeException('Import authorization changed.');
         }
-        $disk = Storage::disk('s3');
+        $disk = Storage::disk();
         $source = $disk->readStream($import->object_key);
         if (!$source) {
             throw new RuntimeException('Import source unavailable.');
@@ -49,7 +53,7 @@ class ImportPatients implements ShouldQueue
             fclose($source);
             rewind($local);
             $header = fgetcsv($local);
-            if ($header !== ['mrn','cpr','name','phone','dob','gender']) {
+            if ($header !== ['mrn', 'cpr', 'name', 'phone', 'dob', 'gender']) {
                 throw new RuntimeException('CSV columns must be mrn,cpr,name,phone,dob,gender.');
             }
             fseek($local, $import->next_byte_offset ?: ftell($local));
@@ -62,30 +66,38 @@ class ImportPatients implements ShouldQueue
                 $errors = [];
                 $seen = [];
                 $read = 0;
-                $start = $import->next_byte_offset;
                 while ($read < 500 && ($row = fgetcsv($local)) !== false) {
                     $read++;
                     $number = $import->processed_rows + $read + 1;
                     if (count($row) !== 6 || strlen(implode('', $row)) > 1000) {
-                        $errors[] = [$number,'Invalid column count or length'];
+                        $errors[] = [$number, 'Invalid column count or length'];
                         continue;
                     }
-                    [$mrn,$cpr,$name,$phone,$dob,$gender] = $row;
+                    [$mrn, $cpr, $name, $phone, $dob, $gender] = $row;
                     $birthDate = \DateTimeImmutable::createFromFormat('!Y-m-d', $dob);
                     if (!preg_match('/^[A-Za-z0-9-]{1,32}$/', $mrn) || !preg_match('/^[A-Za-z0-9-]{1,32}$/', $cpr)
                      || !preg_match('/^.{1,150}$/u', $name) || !preg_match('/^\+?[0-9]{7,20}$/', $phone)
-                     || !in_array($gender, ['male','female','other','unknown'], true)
+                     || !in_array($gender, ['male', 'female', 'other', 'unknown'], true)
                      || $birthDate === false || $birthDate->format('Y-m-d') !== $dob) {
-                        $errors[] = [$number,'Invalid patient data'];
+                        $errors[] = [$number, 'Invalid patient data'];
                         continue;
                     }
                     if (isset($seen[$mrn]) || in_array($cpr, $seen, true)) {
-                        $errors[] = [$number,'Duplicate identifier in chunk'];
+                        $errors[] = [$number, 'Duplicate identifier in chunk'];
                         continue;
                     }
                     $seen[$mrn] = $cpr;
-                    $valid[] = ['row_number' => $number,'mrn' => $mrn,'cpr' => $cpr,'name' => $name,'phone' => $phone,'dob' => $dob,'gender' => $gender,
-                     'created_at' => now('UTC'),'updated_at' => now('UTC')];
+                    $valid[] = [
+                        'row_number' => $number,
+                        'mrn' => $mrn,
+                        'cpr' => $cpr,
+                        'name' => $name,
+                        'phone' => $phone,
+                        'dob' => $dob,
+                        'gender' => $gender,
+                        'created_at' => now('UTC'),
+                        'updated_at' => now('UTC'),
+                    ];
                 }
                 if ($read === 0) {
                     break;
@@ -97,7 +109,7 @@ class ImportPatients implements ShouldQueue
                 $accepted = [];
                 foreach ($valid as $row) {
                     if (isset($conflicts[$row['cpr']]) && $conflicts[$row['cpr']]->mrn !== $row['mrn']) {
-                        $errors[] = [$row['row_number'],'CPR belongs to another MRN'];
+                        $errors[] = [$row['row_number'], 'CPR belongs to another MRN'];
                     } else {
                         unset($row['row_number']);
                         $accepted[] = $row;
@@ -121,7 +133,7 @@ class ImportPatients implements ShouldQueue
                 DB::transaction(function () use ($import, $accepted, $errors, $read, $next): void {
                     if ($accepted !== []) {
                         try {
-                            DB::table('patients')->upsert($accepted, ['mrn'], ['cpr','name','phone','dob','gender','updated_at']);
+                            DB::table('patients')->upsert($accepted, ['mrn'], ['cpr', 'name', 'phone', 'dob', 'gender', 'updated_at']);
                         } catch (\Illuminate\Database\QueryException) {
                             throw new RuntimeException('Patient batch persistence failed.');
                         }
@@ -130,16 +142,20 @@ class ImportPatients implements ShouldQueue
                     if ($current->next_byte_offset !== $import->next_byte_offset) {
                         throw new RuntimeException('Import checkpoint changed.');
                     }
-                    $current->update(['processed_rows' => $current->processed_rows + $read,'valid_rows' => $current->valid_rows + count($accepted),
-                     'invalid_rows' => $current->invalid_rows + count($errors),'next_byte_offset' => $next]);
+                    $current->update([
+                        'processed_rows' => $current->processed_rows + $read,
+                        'valid_rows' => $current->valid_rows + count($accepted),
+                        'invalid_rows' => $current->invalid_rows + count($errors),
+                        'next_byte_offset' => $next,
+                    ]);
                 });
                 $import->refresh();
             }
             if ($import->invalid_rows > 0) {
                 $report = fopen('php://temp/maxmemory:2097152', 'w+b');
                 try {
-                    fputcsv($report, ['row','error']);
-                    for ($chunk = 1;$chunk <= intdiv($import->processed_rows + 499, 500);$chunk++) {
+                    fputcsv($report, ['row', 'error']);
+                    for ($chunk = 1; $chunk <= intdiv($import->processed_rows + 499, 500); $chunk++) {
                         $key = dirname($import->object_key).'/errors/'.sprintf('%08d', $chunk).'.csv';
                         $part = $disk->readStream($key);
                         if (!$part) {
@@ -167,6 +183,9 @@ class ImportPatients implements ShouldQueue
     }
     public function failed(?Throwable $exception): void
     {
-        Import::whereKey($this->importId)->where('status', '!=', 'done')->update(['status' => 'failed','error_code' => 'import_failed']);
+        Import::whereKey($this->importId)->where('status', '!=', 'done')->update([
+            'status' => 'failed',
+            'error_code' => 'import_failed',
+        ]);
     }
 }

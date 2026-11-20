@@ -20,6 +20,23 @@ class ClinicSeedGeneratorTest extends TestCase
         $this->assertSame(4000000, $generator->targets()['payments']);
     }
 
+    public function test_patient_cpr_encodes_birth_year_and_month_with_unique_random_suffix(): void
+    {
+        $generator = $this->generator();
+        $cprs = [];
+
+        for ($id = 1; $id <= 10000; $id++) {
+            $patient = $generator->patient($id);
+            $this->assertMatchesRegularExpression('/^\d{9}$/', $patient['cpr']);
+            $this->assertSame(substr(str_replace('-', '', $patient['dob']), 2, 4), substr($patient['cpr'], 0, 4));
+            $this->assertMatchesRegularExpression('/^\+9733\d{7}$/', $patient['phone']);
+            $cprs[$patient['cpr']] = true;
+        }
+
+        $this->assertCount(10000, $cprs);
+        $this->assertSame($generator->patient(50000), $this->generator()->patient(50000));
+    }
+
     public function test_restart_generates_identical_rows_without_random_state(): void
     {
         $first = $this->generator();

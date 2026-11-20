@@ -23,7 +23,7 @@ class TransferJobTest extends TestCase
 
     public function test_export_retry_keeps_one_csv_and_committed_progress(): void
     {
-        Storage::fake('s3');
+        Storage::fake('local');
         $admin = User::factory()->create(['role' => UserRole::Admin]);
         $branch = Branch::factory()->create();
         $doctor = Doctor::factory()->for($branch)->create();
@@ -38,15 +38,15 @@ class TransferJobTest extends TestCase
         $job->handle(new VisitQueryService());
         $this->assertSame('done', $export->fresh()->status);
         $this->assertSame(1, $export->fresh()->rows_processed);
-        $this->assertCount(2, str_getcsv(Storage::disk('s3')->get($export->object_key), "\n"));
+        $this->assertCount(2, str_getcsv(Storage::disk()->get($export->object_key), "\n"));
     }
 
     public function test_import_replay_upserts_mrn_and_reports_bad_rows_without_values(): void
     {
-        Storage::fake('s3');
+        Storage::fake('local');
         $admin = User::factory()->create(['role' => UserRole::Admin]);
         $csv = "mrn,cpr,name,phone,dob,gender\nMRN-1,CPR-1,Alice,+97330000001,1990-01-01,female\nMRN-2,CPR-1,Bob,+97330000002,1991-01-01,male\n";
-        Storage::disk('s3')->put('imports/test/source.csv', $csv);
+        Storage::disk()->put('imports/test/source.csv', $csv);
         $import = Import::create(['user_id' => $admin->id, 'status' => 'queued',
             'object_key' => 'imports/test/source.csv', 'source_bytes' => strlen($csv)]);
         $job = new ImportPatients($import->id);
@@ -56,7 +56,7 @@ class TransferJobTest extends TestCase
         $this->assertSame(1, $import->fresh()->valid_rows);
         $this->assertSame(1, $import->fresh()->invalid_rows);
         $this->assertDatabaseCount('patients', 1);
-        $report = Storage::disk('s3')->get($import->fresh()->error_object_key);
+        $report = Storage::disk()->get($import->fresh()->error_object_key);
         $this->assertStringContainsString('Duplicate identifier in chunk', $report);
         $this->assertStringNotContainsString('Bob', $report);
     }

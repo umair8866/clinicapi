@@ -32,7 +32,7 @@ class ImportController extends Controller
         }
         $stream = fopen($file->getRealPath(), 'rb');
         try {
-            abort_unless(Storage::disk('s3')->put($key, $stream), 503, 'Storage unavailable.');
+            abort_unless(Storage::disk()->put($key, $stream), 503, 'Storage unavailable.');
         } finally {
             fclose($stream);
         }

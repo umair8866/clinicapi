@@ -20,6 +20,35 @@ class AssessmentApiTest extends TestCase
         return $user->createToken('test', ['*'])->plainTextToken;
     }
 
+    public function test_admin_sees_full_patient_identifiers(): void
+    {
+        $patient = Patient::factory()->create([
+            'cpr' => '980712345',
+            'phone' => '+97331234567',
+        ]);
+        $admin = User::factory()->create(['role' => UserRole::Admin]);
+        $this->withToken($this->bearer($admin))
+            ->getJson('/api/patients?search='.$patient->mrn)
+            ->assertOk()
+            ->assertJsonPath('data.0.cpr', '980712345')
+            ->assertJsonPath('data.0.phone', '+97331234567');
+    }
+
+    public function test_staff_sees_masked_patient_identifiers(): void
+    {
+        $patient = Patient::factory()->create([
+            'cpr' => '980712345',
+            'phone' => '+97331234567',
+        ]);
+        $staff = User::factory()->create(['role' => UserRole::ClinicUser]);
+
+        $this->withToken($this->bearer($staff))
+            ->getJson('/api/patients?search='.$patient->mrn)
+            ->assertOk()
+            ->assertJsonPath('data.0.cpr', '*****2345')
+            ->assertJsonPath('data.0.phone', '********4567');
+    }
+
     public function test_visits_filter_by_branch_and_cursor_without_duplicates(): void
     {
         $branchA = Branch::factory()->create();
