@@ -1,16 +1,32 @@
 # Clinic Visits & Billing
 
-Implementation is incremental. Core models, factories, Policies, active-account/bearer-token checks and the resumable synthetic seed command are implemented. Business endpoints, accounting services, transfers and reports remain pending. Migrations have not been executed by the agent.
+Implementation is incremental. The seven assessment endpoints, Policies, Resources, request validation, summary reports, transactional visit creation and resumable synthetic seed command are implemented. Import/export, full-volume benchmarks and AWS deployment remain pending. The new idempotency migration must be applied before visit creation.
 
 ## API contract
 
 - One group-wide patient identity; MRN/CPR are unique normalized strings. Phone is not unique. Exact identifier search and literal name-prefix search are planned. Directory responses expose ID, MRN, name and masked identifiers only.
 - Active `admin` users access all branches; `clinic_admin` and `clinic_user` access assigned branches. Patient directory access does not grant access to another branch's visits or invoices. Unauthorized record access returns 404; forbidden capabilities return 403.
-- APIs require Sanctum bearer tokens. Token abilities restrict role permissions: `patients:read`, `visits:read`, `visits:write`, `invoices:read`. `*` grants token abilities only, never additional branch access. Dashboard authentication will use the web session guard independently.
+- APIs require Sanctum bearer tokens. Token abilities restrict role permissions: `patients:read`, `visits:read`, `visits:write`, `invoices:read`, `reports:read`. `*` grants token abilities only, never additional branch access.
 - Money uses integer minor units internally and decimal strings at the API boundary. Initial currency is BHD, scale 3. Gross is quantity times unit price; net is gross minus discount plus VAT. VAT is rounded half-up on the invoice's discounted subtotal using integer basis points. Services must enforce bounds before multiplication.
 - Store instants in UTC. Initial reporting timezone is Asia/Bahrain; branch timezone controls display and schedules. Invoice billing date derives from visit time in the reporting timezone. Inclusive `to` becomes the next day's exclusive boundary; maximum range is one calendar year from `from`, clamping February 29 to February 28 when necessary.
 - Revenue includes non-void invoices billed in the range. Paid means payments allocated to those invoices as of report generation. Top-patient totals combine branches and are admin-only. Cursor pagination supports next/previous navigation, not arbitrary page-number jumps.
-- Visit creation will require an idempotency key. Retain successful keys through the assessment; changed payload with the same key returns 409. Creation, summaries and response snapshot must commit together.
+- Visit creation requires an `Idempotency-Key` header of 16–128 letters, digits, underscores or hyphens. Successful keys are retained; changed payload with the same key returns 409. Visit, invoice, items, summaries and response snapshot commit together. Monetary input uses BHD decimal strings with exactly three digits after the decimal.
+
+## Assessment API
+
+Issue a private reviewer token for an active account: `php artisan reviewer:token admin@gmail.com --days=7`. Send it as `Authorization: Bearer TOKEN`. The command prints the token once; do not commit or share it publicly.
+
+| Method | Path | Input |
+|---|---|---|
+| GET | `/api/patients?search=` | Exact MRN/CPR/phone or name prefix |
+| GET | `/api/patients/{id}/visits` | `per_page`, `cursor` and optional visit filters |
+| GET | `/api/visits` | `branch_id`, `doctor_id`, `status`, `from`, `to`, `per_page`, `cursor` |
+| GET | `/api/invoices/{id}` | Invoice ID |
+| GET | `/api/reports/revenue` | `from`, `to`, `group_by=branch|doctor|month`, optional `branch_id` |
+| GET | `/api/reports/top-patients` | `year` (admin only) |
+| POST | `/api/visits` | Patient/branch/doctor, UTC `visit_date`, status, discount, items and Idempotency-Key |
+
+The small database HTTP tests are written in `tests/Feature/AssessmentApiTest.php` but await an isolated MariaDB test database. Performance targets remain unmeasured.
 
 ## Verification and seeding status
 
