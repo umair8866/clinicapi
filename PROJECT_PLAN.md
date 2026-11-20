@@ -1,6 +1,6 @@
 # Clinic Visits & Billing API â€” implementation plan
 
-Status: core/scheduling/summary/seed-progress migrations, core models/factories, branch Policies, scoped visit queries and account/token checks are prepared. The data:seed command now writes deterministic batches with atomic source/summary/checkpoint commits, a session-owned database lock, immutable configuration, stop/resume support and reconciliation before completion. DatabaseSeeder creates no sample records. Seven generator tests and nine access tests passed without database writes. Resume/rollback/concurrency integration tests are written but await explicit isolated MariaDB setup; no migrations or seed commands were executed. Full-volume throughput and real process-kill recovery remain unmeasured. Next increment: four read endpoints and HTTP authorization tests, followed by transactional visit creation. Schedule services remain pending.
+Status: Core schema and a small synthetic seed run exist in the development database. All seven assessment API routes plus import/export routes, a reviewer-token command, policies, validation, resources, transactional visit creation, reports and queued transfer jobs are coded. Existing database-free access tests pass. The new idempotency, exports and imports migrations are pending. Database-backed API/transfer tests require a separate MariaDB test database and have not run; S3/SQS, worker restart, full-volume throughput, EXPLAIN targets and AWS deployment remain unverified. No frontend is planned.
 
 ## 1. Decisions before implementation
 
