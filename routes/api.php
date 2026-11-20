@@ -7,6 +7,8 @@ use App\Http\Controllers\Api\PatientController;
 use App\Http\Controllers\Api\VisitController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\ExportController;
+use App\Http\Controllers\Api\ImportController;
 
 Route::get('/user', function (Request $request): UserResource {
     return new UserResource($request->user());
@@ -20,4 +22,8 @@ Route::middleware(['auth:sanctum', 'api.token', 'active', 'throttle:60,1'])->gro
     Route::get('invoices/{invoice}', [InvoiceController::class, 'show']);
     Route::get('reports/revenue', [ReportController::class, 'revenue'])->middleware('throttle:20,1');
     Route::get('reports/top-patients', [ReportController::class, 'topPatients'])->middleware('throttle:20,1');
+    Route::post('exports/visits', [ExportController::class, 'store'])->middleware('throttle:5,1');
+    Route::get('exports/{export}', [ExportController::class, 'show']);
+    Route::post('imports/patients', [ImportController::class, 'store'])->middleware('throttle:5,1');
+    Route::get('imports/{import}', [ImportController::class, 'show']);
 });

@@ -1,6 +1,6 @@
 # Clinic Visits & Billing
 
-Implementation is incremental. The seven assessment endpoints, Policies, Resources, request validation, summary reports, transactional visit creation and resumable synthetic seed command are implemented. Import/export, full-volume benchmarks and AWS deployment remain pending. The new idempotency migration must be applied before visit creation.
+Implementation is incremental. The assessment endpoints, Policies, Resources, request validation, summary reports, transactional visit creation, resumable synthetic seed command and queued import/export code are implemented. Full-volume benchmarks, S3 integration tests and AWS deployment remain pending. Apply the new idempotency/import/export migrations before using their endpoints.
 
 ## API contract
 
@@ -25,8 +25,14 @@ Issue a private reviewer token for an active account: `php artisan reviewer:toke
 | GET | `/api/reports/revenue` | `from`, `to`, `group_by=branch|doctor|month`, optional `branch_id` |
 | GET | `/api/reports/top-patients` | `year` (admin only) |
 | POST | `/api/visits` | Patient/branch/doctor, UTC `visit_date`, status, discount, items and Idempotency-Key |
+| POST | `/api/exports/visits` | Same filters as GET visits; clinic admin/admin |
+| GET | `/api/exports/{id}` | Status, progress, five-minute download URL when ready |
+| POST | `/api/imports/patients` | Multipart `file` CSV; admin only, 100 MiB and 500,000 rows max |
+| GET | `/api/imports/{id}` | Status, progress, five-minute error-report URL when ready |
 
 The small database HTTP tests are written in `tests/Feature/AssessmentApiTest.php` but await an isolated MariaDB test database. Performance targets remain unmeasured.
+
+Transfers use the `s3` disk and queue worker. Configure a private S3 bucket and `QUEUE_CONNECTION=sqs` for AWS; the worker timeout is 3600 seconds, so the SQS visibility timeout must exceed it. Run workers under Supervisor and `php artisan schedule:run` every minute for queued/stalled transfer recovery. Export writes deterministic 1,000-row S3 parts, checkpoints each part, then assembles the CSV using a temporary stream. Import checkpoints every 500 CSV rows and persists safe error chunks on S3. The import CSV header is exactly `mrn,cpr,name,phone,dob,gender`. Temporary disk space must accommodate the full source/final CSV; memory remains bounded. Do not treat an untested full-volume export or import as a measured success.
 
 ## Verification and seeding status
 

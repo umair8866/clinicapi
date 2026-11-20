@@ -1,12 +1,12 @@
-# Clinic Visits & Billing API — implementation plan
+# Clinic Visits & Billing API â€” implementation plan
 
-Status: implementation started. Increment 1 prepares the seven business tables, branch assignments, role/active columns, UserRole enum, Sanctum user token support, PSR-12 formatting and Git. Syntax and route registration checks passed. No migrations, seeders or database-writing tests executed. Schema execution and integration verification remain pending. Next increment: API contract, domain models/factories, active-user/token middleware and branch Policies; summary and operational tables follow their features.
+Status: core/scheduling/summary/seed-progress migrations, core models/factories, branch Policies, scoped visit queries and account/token checks are prepared. The data:seed command now writes deterministic batches with atomic source/summary/checkpoint commits, a session-owned database lock, immutable configuration, stop/resume support and reconciliation before completion. DatabaseSeeder creates no sample records. Seven generator tests and nine access tests passed without database writes. Resume/rollback/concurrency integration tests are written but await explicit isolated MariaDB setup; no migrations or seed commands were executed. Full-volume throughput and real process-kill recovery remain unmeasured. Next increment: four read endpoints and HTTP authorization tests, followed by transactional visit creation. Schedule services remain pending.
 
 ## 1. Decisions before implementation
 
 - Database connection verified: `assignment`, server `12.2.2-MariaDB`. Use this existing connection for development as requested. Use a separate MariaDB database for tests. No database replacement or version-matching prerequisite.
 - Use Laravel 13.43.0, PHP constraint `^8.4`, and installed PHP 8.4.19. Preserve PHP 8.5 compatibility. The user explicitly chose the current stack on 19 November 2026; proceed without downgrading or waiting for stack approval. Document actual versions with benchmark results.
-- Core deliverable remains the assessment API. User-requested addition: a minimal authenticated clinic dashboard with muted backgrounds, using Blade, ordinary CSS and minimal JavaScript. Reuse the same services and Policies; no separate SPA or frontend framework is required. See section 9B.
+- Core deliverable is the assessment API. No frontend is required.
 - Keep one application, ordinary Eloquent models, Form Requests, API Resources, small injected services, and queued jobs. No repository interfaces, generic CRUD framework, or unnecessary abstractions.
 - Dependencies verified installed: Sanctum 4.5.0 for tokens; S3 Flysystem adapter 3.35.3 and AWS SDK 3.405.0 for S3/SQS; Boost 2.10.4 for development guidelines/tools. PHPUnit/Pint are installed. Generated Boost guidelines have been read; MCP configuration exists, but Boost tools are not connected in this agent session.
 - Prefer SQS for deployment queues and database-backed job progress. Redis is optional and unnecessary initially. Local SQS integration can use a development queue; tests fake queue/storage.
@@ -35,16 +35,16 @@ Use `index`, `show`, `store`; explicit `if` conditions; small methods; validated
 Write these assumptions into README/OpenAPI before coding:
 
 - One healthcare group; clinic staff access visits/billing only within assigned branches, system admins access all branches. A minimal shared patient directory allows first visits at another branch; clinical history remains branch-scoped. Use `branch_user` and Policies; see the role matrix and patient visibility rules in section 4A.
-- All assessment API endpoints use Sanctum token authentication, Form Requests, Resources, and rate limits. Issue the reviewer token through a CLI command. The additional Blade dashboard uses session authentication, CSRF protection and the same Policies. Public registration is unnecessary.
+- All assessment API endpoints use Sanctum bearer-token authentication, Form Requests, Resources and rate limits. Issue the reviewer token through a CLI command. No public registration is required.
 - MRN, CPR and phone are strings, preserving leading zeros. Exact normalized MRN/CPR/phone search; literal name-prefix search. Phone need not be unique. CPR uniqueness is an explicit assumption.
 - Return masked CPR/phone by default. Use synthetic data only. Do not log search values, authorization headers, request bodies, or signed URLs; redact query strings in Nginx/application logs. Encrypt storage/backups and require TLS. Field-level encryption is an optional later requirement: encrypted casts alone cannot support indexed exact search.
 - Use a single configured currency. BHD with three decimal places is a proposed assumption, not a PDF requirement. Store all monetary values as integer minor units in BIGINT columns; accept/return decimal strings. Integer quantities initially; reject excessive amounts/quantities before multiplication.
-- Gross = sum(quantity × unit price); net = gross − discount + VAT; outstanding = net − paid. Validate discount ≤ gross; calculate VAT using integer basis points and a documented rounding rule. Never accept client-calculated totals. Currency/VAT configuration is not a legal tax determination.
+- Gross = sum(quantity Ã— unit price); net = gross âˆ’ discount + VAT; outstanding = net âˆ’ paid. Validate discount â‰¤ gross; calculate VAT using integer basis points and a documented rounding rule. Never accept client-calculated totals. Currency/VAT configuration is not a legal tax determination.
 - Store timestamps in UTC. Reports use the invoice billing date in a documented reporting timezone. Treat the inclusive `to` date as an exclusive next-day boundary. Support any rolling one-year range, including ranges crossing December/January; do not restrict both dates to the same calendar year. Define the maximum exclusive end as the start plus one calendar year, with documented leap-day handling.
 - Revenue reports include non-void invoices billed in the selected range; paid is payments allocated to those invoices as of report generation, not cash received within the date range. Outstanding follows the same basis. Top patients uses the same net-billing inclusion rule.
 - Cursor pagination means next/previous navigation, not arbitrary `page=10000` jumps. Document this explicitly.
 
-## 4. Write schema files — do not execute them
+## 4. Write schema files â€” do not execute them
 
 Required business volume: **30,001,025 rows**, before summary/operational tables.
 
@@ -158,7 +158,7 @@ These are supporting tables in addition to the seven required business tables. C
 - Lease token/expiry identify the current worker; checkpoint updates require matching ownership. Serialize imports with one shared DB-backed lock in addition to per-import leases. Seed command also holds a shared lock so a second run cannot overlap the same target database.
 - A seed configuration change requires a different empty target/run, not resetting the checkpoint. Final exact source counts and relationships are checked before marking done.
 - Retain Laravel's generated `personal_access_tokens` schema: id, tokenable_type/id, name, unique token hash, nullable abilities/last_used_at/expires_at, timestamps. Add token abilities only as a restriction on role permissions, never a privilege grant. Sanctum's polymorphic token ownership has no normal users FK; deactivate/revoke explicitly.
-- Keep existing `cache`, `cache_locks`, `failed_jobs` and `job_batches` support tables if used. Database `jobs` can remain unused with SQS. Use the existing `sessions` table for the additional Blade dashboard; keep the assessment API token-authenticated. Public registration/password-reset screens remain outside the initial scope.
+- Keep existing framework cache and queue tables where used. The assessment API uses bearer tokens; public registration/password-reset screens are outside scope.
 - Job chunk FKs may cascade only when explicitly purging expired operational jobs; clinical data never cascades. S3 cleanup is a separate retryable operation. User references on jobs/idempotency use RESTRICT; deactivate accounts instead of deleting them.
 
 ### 4D. Relationships and creation order
@@ -203,15 +203,61 @@ Use explicit `created_by` foreign key for `Visit::creator`. Composite primary-ke
 
 Prepare migrations in dependency order: (1) users adjustments + branches, (2) branch_user + doctors + patients, (3) visits, (4) invoices, (5) items + payments, (6) summaries, (7) idempotency + seed progress, (8) import/export records then chunk tables. Existing framework/token migrations remain. Review generated SQL/types/indexes before you manually run migrations; no schema or seed execution by the agent.
 
+### 4E. One patient visiting multiple branches
+
+Required flow: one global patient record and MRN across the healthcare group. The same patient can visit branch A, then branch B, then return to branch A over the five-year history. Changing the visited branch never creates a duplicate patient or transfers previous visits/invoices to the new branch.
+
+1. Staff at branch B find the existing patient through the shared, masked patient directory using MRN/CPR/phone/name search.
+2. Staff select an active branch they are authorized to use, and an active doctor belonging to that branch.
+3. `POST /api/visits` receives the existing `patient_id`, selected `branch_id`, matching `doctor_id`, visit date/status and invoice items. Having previous visits only in branch A does not prevent a first visit in branch B.
+4. The service creates a new visit and its invoice/items in one transaction. Existing branch A records remain unchanged. Payments reference the specific invoice, so payments for visits at different branches never mix.
+5. Revenue/doctor summaries attribute the new invoice and its payments to branch B through this visit. Patient annual totals combine eligible invoices across branches for system-admin reporting only.
+
+Migration requirements:
+
+- Keep `patients` independent of a branch: no required `patients.branch_id` and no patient-branch ownership constraint.
+- Keep `visits.patient_id` non-unique so a patient can have many visits; store `branch_id` on every visit. Do not add a unique `(patient_id, branch_id)` constraint, because repeat visits to the same branch are valid.
+- Keep unique patient MRN/CPR across the group, unique `invoices.visit_id`, and the composite doctor/branch FK. A doctor from branch A cannot be used for a branch B visit.
+- Individual `create_patients_table` and `create_visits_table` migrations already have this structure; no new table or schema alteration is needed for cross-branch visits. Clinic tables use separate migrations in dependency order. The existing patient/date and branch/date indexes support their respective histories; benchmark combined patient+branch filters before adding another large index.
+- `branch_user` controls staff access only. Do not use it for patients or add a patient-branch pivot just to record visits; visits already provide that association.
+
+Relationships and visibility:
+
+- `Patient::visits()` includes all visits at the model relationship level; services apply the current user's branch scope before returning records.
+- `Patient::invoices()` reaches invoices through visits. Patient payments are queried through invoices and visits, with the same authorized branch scope.
+- `Branch::visits()`, `Visit::patient()`, `Visit::branch()` and `Visit::doctor()` remain the source relationships. To list a patient's visited branches, query distinct branches through authorized visits; avoid duplicate branches from repeated visits.
+- System admin sees the patient's history across all branches. Clinic staff see only visits/invoices/payments within their assigned branches. Cross-branch patient identity sharing does not grant access to another branch's medical/billing history. A user assigned to A and B sees both, with branch names on each visit.
+
+Seeder requirements:
+
+- Explicitly generate cross-branch histories rather than assigning every visit of a patient to one permanent branch. Proposed deterministic sample: 20% of patients having at least two visits receive visits in at least two distinct branches; the remaining patients may stay within one branch. This percentage is a fixture choice, not a PDF requirement.
+- Pick the doctor from the selected visit branch for every seeded visit. Preserve global patient IDs/MRNs, the five-year timestamp rules, exact target counts, one invoice per visit, and valid invoice-linked payments.
+- Include repeat returns to a previous branch and cross-branch patients with partial/full payments. Derive branch choices deterministically from patient/visit sequence and the saved seed configuration, without retaining all patient visits in memory.
+- Add a small deterministic A -> B -> A scenario for manual review/tests. Validate cross-branch sample counts with `COUNT(DISTINCT branch_id)` grouped by patient on the database, without collecting millions of grouped rows into PHP.
+- Seed final output includes the number of patients visiting multiple branches alongside normal counts/timing. Include this verification time in the full-run benchmark.
+
+Acceptance checks: same patient/MRN has visits at A and B; doctor/branch mismatch is rejected; unrelated staff cannot create a visit for B or read B's invoice; first visit at B is allowed for B's staff; repeat A visits remain allowed; branch revenue stays separate while system-admin patient totals reconcile across both branches. These are planned checks, not executed tests.
+
+### 4F. Branch hours, doctor availability, leave and closures
+
+- Separate migrations define `branch_hours`, `doctor_availabilities`, `doctor_leaves` and `branch_closures`; these are supporting tables outside the required business-row counts.
+- Weekly hours use ISO weekdays: 1 = Monday through 7 = Sunday. Times are local to `branches.timezone`; doctor availability uses the doctor's branch timezone. Multiple non-overlapping periods support split shifts. No weekly rows for a day means closed/unavailable.
+- Weekly periods are start-inclusive/end-exclusive. Split overnight shifts at midnight into two weekday rows; `24:00:00` is allowed only as an end-of-day boundary. Unique owner/day/start indexes prevent duplicate starts; CHECK constraints validate weekdays and time ordering.
+- Leave and closures store UTC `starts_at`/`ends_at` and an optional internal reason. Convert local input using the branch timezone. Full-day periods run from local midnight to the following midnight; partial-day and multi-day periods use the same fields. End is exclusive. A closure overrides branch hours; leave overrides doctor availability.
+- Effective availability is the intersection of branch hours and doctor hours, minus branch closures and doctor leave. The doctor remains assigned to one branch. Leave reasons must not appear in shared patient-directory or public availability responses.
+- Schedule management and visit-time enforcement belong to the upcoming services/Policies increment: validate overlapping weekly periods under an owner-row lock, reject doctor hours outside branch hours, revalidate when branch hours change, and check active branch/doctor plus effective availability for new scheduled visits. Schedule changes must flag affected future visits for review rather than silently cancel or move them. Historical visits remain unchanged.
+- This schema does not implement appointment slots or prevent double booking; visit duration/capacity are outside the current API contract. Test split shifts, midnight boundaries, leave/closure overrides and timezone conversion when implementing schedule services. Synthetic historical visits must not be rejected against today's weekly schedule.
+- Status: scheduling migration files prepared; schedule services, authorization and integration tests remain pending.
+
 ## 5. Build and benchmark the seed command early
 
 Implement `data:seed --patients=1000000 --visits=5000000`, with optional documented batch size/run identifier.
 
 - Deterministic synthetic data covering the last FIVE YEARS up to the start of the seed run. Capture `range_end=now()` once and `range_start=range_end minus five calendar years`, store both in `seed_runs.config`, and reuse them unchanged on resume. Example for a run started on 19 November 2026: 19 November 2021 through the captured time on 19 November 2026. Never recalculate the range during individual batches.
 - Spread visits/invoices/payments and their applicable business timestamps across all years/months in that window, through the current cutoff; no future transactions. Parent registration/creation dates precede dependent visits; invoice/item creation follows the visit; payments follow the invoice and never exceed the cutoff. Keep `updated_at >= created_at`. DOB represents a realistic birth date and can precede the five-year window; it must precede the patient's visits. This avoids incorrectly making every patient five years old or younger.
-- Allocate visits so most patients have 2–5 and a small documented tail has 50+; verify the distribution and exact requested total.
+- Allocate visits so most patients have 2â€“5 and a small documented tail has 50+; verify the distribution and exact requested total.
 - One invoice and three items per visit. Generate at least 4,000,000 payment rows for the default 5,000,000 visits, distributed over eligible invoices with zero, one or multiple payments. For scaled trials, target `floor(visits * 0.8)` payment rows; this is a row count, not an assumption that exactly 80% of invoices have one payment. Include unpaid, partially paid and fully paid invoices without overpayment. Distribute repeat patients' visits, invoices and payments across different months/years; totals, ownership and statuses must agree.
-- Stream bounded batches, initially 1,000–5,000 rows. Generate IDs without loading all patients/visits. Avoid per-record factories/events and query logging.
+- Stream bounded batches, initially 1,000â€“5,000 rows. Generate IDs without loading all patients/visits. Avoid per-record factories/events and query logging.
 - Console progress is required on local and server runs: current table/phase, committed rows versus target, percentage, total committed rows, elapsed time, rows/second and estimated remaining time. Refresh once per batch or at a bounded time interval, not once per row. Show resumed committed counts immediately; rolled-back/retried rows must not inflate progress.
 - On completion print and persist a summary: rows per table, combined business rows, date range, total duration in seconds and HH:MM:SS, phase durations, peak memory, and whether the full run was below 1,800 seconds. Report success only after required counts, ownership relationships and monetary totals reconcile. Failure/interruption reports the last committed checkpoint and elapsed duration; resume does not label existing rows as newly inserted.
 - Store cumulative active elapsed milliseconds/phase timings in the seed-run metrics and retain first-start/completion times. Report active execution time separately from end-to-end wall time on resumed runs. The under-30-minute assessment result must come from a fresh uninterrupted full run, including generation, inserts, required indexes/summaries and final validation; do not claim compliance by excluding slow phases or pauses.
@@ -234,7 +280,7 @@ Use direct timestamp ranges, not functions wrapped around indexed date columns. 
 
 ## 7. Implement transactional visit creation
 
-`POST /api/visits` → StoreVisitRequest → VisitService → VisitResource.
+`POST /api/visits` â†’ StoreVisitRequest â†’ VisitService â†’ VisitResource.
 
 - Validate patient, doctor/branch membership, permissions, status, date, item limits, service codes, prices and discount.
 - Require bounded `Idempotency-Key`; unique scope `(user_id, endpoint, key_hash)` and normalized validated-payload hash.
@@ -293,36 +339,17 @@ Both flows: bounded job duration, persisted progress, overlap protection, safe r
 
 ### 9A. Application security and response headers
 
-User-requested security requirements apply to the API and added dashboard. Headers supplement validation, escaping and authorization; a middleware that strips tags from every request is not an XSS solution and would corrupt legitimate data.
+Security requirements apply to the API. Headers supplement validation, escaping and authorization.
 
 - Add `SecurityHeaders` middleware and register it centrally. Ensure policies also cover authentication failures and rendered 403/404/422/500 responses; verify error paths rather than assuming a normal response middleware catches every exception.
-- Production HTML CSP baseline: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`. Self-host CSS/JS; avoid inline handlers, `eval`, external fonts and broad wildcards. If browser uploads directly to S3, permit only the configured bucket origin in `connect-src` on the relevant pages. Permit local Vite/HMR origins only in development. [CSP reference](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy)
 - Set `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and `Permissions-Policy: camera=(), microphone=(), geolocation=()`. Use `Cache-Control: no-store` on sensitive HTML/JSON/download-URL responses; static versioned assets may remain cacheable.
 - Enable HSTS only on the HTTPS deployment after HTTPS works; do not force HSTS for local HTTP. Keep production/dev header settings in configuration.
 - Do not use legacy `X-XSS-Protection: 1; mode=block` as the defense; leave it absent or explicitly disabled. Use contextual output escaping and CSP instead. [Deprecated XSS filter guidance](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/X-XSS-Protection?region=united-states)
-- Blade displays untrusted data with escaped `{{ }}` output. No raw `{!! !!}` for patient names, imported values or errors. JavaScript uses `textContent` for untrusted strings. JSON responses use the correct content type; CSV exports neutralize formula-like cells. Do not inject JSON/CSV values into HTML unsafely.
-- Authentication: rate-limited login with generic credential errors, session regeneration after login, session invalidation and CSRF-token regeneration at logout, HttpOnly/SameSite cookies and Secure cookies under HTTPS. Every state-changing dashboard request has CSRF protection. Bind SQL values and allowlist report grouping/sorting.
-- Authorization: active-user middleware plus Policies and branch-scoped queries. Hiding a dashboard button is not authorization; direct requests must enforce the same rules. Validate identifiers, file ownership and roles on both web and API paths. Restrict CORS to intended origins if needed; no permissive credentialed wildcard.
+- JSON responses use the correct content type; CSV exports neutralize formula-like cells. Do not expose sensitive patient data in responses or logs.
+- Authentication: require expiring Sanctum bearer tokens on assessment endpoints; revoke tokens when accounts are disabled. Bind SQL values and allowlist report grouping/sorting.
+- Authorization: active-user middleware, Policies and branch-scoped queries. Validate identifiers, ownership and roles on every API path.
 - Hide PHP version disclosure using `expose_php=Off` in the active web PHP configuration and remove `X-Powered-By` at the response/web-server layer. Middleware alone may not remove a header added outside Laravel. Verify actual HTTP headers after the configuration is applied. Also suppress detailed web-server version banners where configurable; this does not make the technology impossible to identify. [PHP configuration reference](https://www.php.net/manual/en/ini.core.php)
 - Use clean Laravel routes, never public `.php` feature URLs. Web document root must be `public`; no exposed `.env`, vendor/source files, database files, phpinfo/debug pages or exception traces. Production `APP_DEBUG=false`; return safe messages and log redacted diagnostics privately. Server configuration remains a later manual/deployment task; no host configuration is changed during planning.
-
-### 9B. Minimal clinic dashboard — user-requested addition
-
-This is additional scope requested by the user, not a replacement for any assessment API endpoint. Build after the schema/core services are available; do not present a static mockup as a completed working dashboard.
-
-- Use simple Blade layouts/components, a small locally built CSS file and minimal JavaScript. Reuse business services, Form Requests and Policies from the API. No React/Vue, paid admin template, new component framework or unnecessary chart package.
-- Visual direction: quiet clinical workspace, precise table alignment, soft gray-green background `#F3F5F4`, surfaces `#FAFBFA`, border `#DDE4DF`, dark text `#26352E`, muted secondary text `#5B6B62`, restrained accent `#536E66`. Human-readable system sans-serif, 14–16px body text, compact 8–12px corners, subtle borders, little or no shadow. User preference for soft colors takes priority over any skill's bright accent palette. Check text/control contrast; soft backgrounds must not mean faint text.
-- Layout: small sidebar, compact top bar with authorized branch selector and account menu, page title/date filters, limited summary cards, and one primary table. Responsive sidebar and horizontally scrollable tables; visible keyboard focus, labels and useful empty/loading/error states. No gradients, neon colors, large decorative illustrations or fabricated statistics.
-- Authentication screens: minimal sign-in and POST logout. No public registration. Same User records/roles as the API; the dashboard uses secure sessions without storing bearer tokens in browser local storage or rendering them into pages. The required `/api/*` routes continue to require bearer tokens; Blade controllers call shared services directly.
-- Main navigation: Overview, Patients, Visits, Invoices; Revenue and Exports for admins/clinic admins; Patient Imports for system admin only. No account-management screens initially.
-- Overview: selected branch/date range, recent visits, and visit counts. Admin/clinic-admin cards may show net billing, paid and outstanding from the existing summaries. Clinic users do not receive aggregate financial/report data they are forbidden to access, even if the UI would hide it.
-- Patients: MRN/name search and masked identifiers; selected patient's chronological visit history with doctor, branch, invoice total, and invoice detail/payments. Apply branch rules to every visit/invoice; never aggregate another branch's history into a clinic user's view.
-- Visits: same branch/doctor/status/date filters as `/api/visits`, cursor navigation, and a small create-visit form with invoice items, integer-safe amounts and idempotency support. Reuse the same transactional service; do not duplicate billing logic in Blade/controllers.
-- Invoices: invoice details reached from visit/patient history, with items, payments and outstanding. No new global invoice-list API or payment-entry feature is needed for this dashboard.
-- Revenue: exact report grouping/date/year contracts from section 8; show a simple result table first. Top-patients visible only to system admin. Use the existing summaries rather than scanning all raw invoices for cards.
-- Transfers: eligible users submit exports and view progress/downloads; system admins upload patient CSVs and retrieve validation reports. Use authorized temporary links and existing job-status records. Display real statuses only; an unavailable data source shows an explicit empty/error state rather than placeholder totals.
-- Initial web routes: `GET/POST /login`, `POST /logout`, `GET /dashboard`, `/dashboard/patients`, `/dashboard/patients/{patient}/visits`, `/dashboard/visits`, `/dashboard/visits/create`, `/dashboard/invoices/{invoice}`, `/dashboard/reports/revenue`, `/dashboard/reports/top-patients`, `/dashboard/exports`, `/dashboard/imports`. Add only the POST actions needed by those screens; name routes and protect them with web auth, active-user checks and Policies. Use the existing sessions table, without automatically running its migration.
-- Completion checks: sign-in/out, role/branch restrictions, actual DB-backed lists/forms, error handling, narrow/mobile layout, keyboard access, XSS payload rendered as text, CSP compatibility and no PHP/version header disclosure. Do not mark the dashboard built until these flows work.
 
 ## 10. Tests and performance evidence
 
@@ -331,7 +358,7 @@ Write tests with implementation, not at the end. Required feature suites:
 - Visits: each filter and combinations; invalid dates/status; authorization; equal timestamps; cursor boundaries without duplicates; bounded page size.
 - Revenue: exact amounts, partial/unpaid/void invoices, multiple payments/items, all three groupings, date boundaries, leap years, empty results, permissions and summary/source reconciliation.
 - Seed verification: five-year coverage through frozen cutoff, plausible DOB/parent dates, repeated patient histories, multiple payments per invoice, committed-only progress, persisted completion timing and restart accuracy. Check monthly/yearly distribution without loading all rows into PHP.
-- Security/dashboard verification: guest/disabled-user rejection, session login/logout and CSRF, branch isolation, role-restricted cards/actions, escaped imported text, response headers on success/errors, and clean PHP-header output on actual HTTP responses. Do not execute database-migrating tests without the user's manual database setup.
+- Security verification: guest/disabled-user rejection, missing or expired bearer-token rejection, branch isolation, role restrictions, response headers and safe errors.
 - Create visit: 201 success, integer rounding, invalid foreign relationships, rollback, replay, payload conflict, concurrent duplicate requests and exactly-once summary effects.
 - Add focused import/export retry tests: crash after DB/S3 writes, duplicate deliveries, ownership, CPR conflicts, malformed CSV, formula injection and worker restart.
 - PHP 8.4 and 8.5 CI matrix; isolated MariaDB integration database matching the development server. PHPUnit for behavior; Pint PSR-12 for formatting. Verify the chosen AWS database separately at deployment time; local measurements do not establish performance on a different server/engine.
@@ -359,11 +386,10 @@ Write tests with implementation, not at the end. Required feature suites:
 | 4 | AWS setup/deploy; manual full seed; performance measurements/tuning | Live HTTPS API; measured targets and restart checks |
 | 5 | Remaining fixes; README/OpenAPI; answers; submission rehearsal | Evidence, meaningful Git history, reviewer token and URLs ready |
 
-The PDF estimates 12–16 hours. Full-volume tuning and AWS provisioning are the largest uncertainties; protect the final day and prioritize mandatory features. Bootstrap is done, but the domain implementation has not started.
+The PDF estimates 12â€“16 hours. Full-volume tuning and AWS provisioning are the largest uncertainties; protect the final day and prioritize mandatory features. Bootstrap is done, but the domain implementation has not started.
 
-The requested dashboard adds work beyond the PDF's API-only scope. Build a minimal functional interface after core services, without delaying full-volume seeding/performance checks; revise the time estimate once the backend is ready. Do not silently drop required endpoints, retry guarantees or benchmark evidence to fit UI work.
 
-Manual commands — only after the corresponding code exists and the intended database is verified:
+Manual commands â€” only after the corresponding code exists and the intended database is verified:
 
 ```powershell
 # Development tooling, before application implementation
@@ -389,4 +415,4 @@ Do not use `composer run setup`: its existing script executes migrations. Do not
 
 Final submission: GitHub repository, live HTTPS base URL, privately shared reviewer token, README with architecture/commands/measurements/index rationale/package justification/costs, OpenAPI or Postman, and five answers of at most about 150 words each. Answer topics: 200M-row evolution; deep OFFSET versus cursors; expand/backfill/validate/contract for a NOT NULL column; RDS query diagnosis; shared state/queues/scheduling for three EC2 instances. Do not publish tokens, SQL dumps, private assignment contents, or other-project source code.
 
-**Next implementation step:** use the existing Laravel 13/MariaDB connection and installed packages; prepare schema and API skeleton files for review, including User token support and the roles defined in section 4A. Provide migration commands to you without executing them. No migrations or seeders may be run automatically.
+**Next implementation step:** implement the four read API endpoints and their authorization/validation tests, then transactional visit creation.
