@@ -8,7 +8,31 @@ use InvalidArgumentException;
 
 class ClinicSeedGenerator
 {
-    public const VERSION = 2;
+    public const VERSION = 4;
+
+    private const SPECIALTIES = [
+        'General Practice', 'Internal Medicine', 'Cardiology', 'Pediatrics',
+        'Dermatology', 'Orthopedics', 'Neurology', 'Gastroenterology',
+        'Endocrinology', 'Pulmonology', 'Ophthalmology', 'ENT',
+        'Obstetrics and Gynecology', 'Psychiatry', 'Urology', 'General Surgery',
+    ];
+
+    private const FIRST_NAMES = [
+        'Ali', 'Fatima', 'Ahmed', 'Mariam', 'Hassan', 'Noor', 'Yusuf', 'Sara',
+        'Omar', 'Aisha', 'Khalid', 'Layla', 'Mohammed', 'Huda', 'Bilal', 'Zainab',
+        'Salman', 'Amal', 'Ibrahim', 'Reem', 'Hamad', 'Dana', 'Nasser', 'Maha',
+        'Abdullah', 'Haya', 'Rashid', 'Shaikha', 'Faisal', 'Eman', 'Saeed', 'Zahra',
+    ];
+
+    private const LAST_NAMES = [
+        'Hassan', 'Ahmed', 'Ali', 'Khalifa', 'Mansoor', 'Rashid', 'Mahmood', 'Saleh',
+        'Abbas', 'Hamad', 'Nasser', 'Jassim', 'Abdulla', 'Yousif', 'Salman', 'Ibrahim',
+        'Farooq', 'Qasim', 'Darwish', 'Sayed', 'Sharif', 'Al Khalifa', 'Al Ansari', 'Al Doseri',
+        'Al Haddad', 'Al Mahmood', 'Al Nuaimi', 'Al Saeed', 'Al Balushi', 'Al Hammadi',
+        'Al Zayani', 'Al Fardan',
+    ];
+
+    private const CLINIC_TYPES = ['Medical Center', 'Family Clinic', 'Health Center', 'Specialty Clinic', 'Care Clinic'];
 
     private int $start;
     private int $end;
@@ -41,8 +65,10 @@ class ClinicSeedGenerator
     /** @return array<string, int|string|bool> */
     public function branch(int $id): array
     {
-        return ['id' => $id, 'code' => sprintf('SYN-%02d', $id), 'name' => 'Synthetic Clinic '.$id,
-            'city' => ['Manama', 'Muharraq', 'Riffa', 'Isa Town', 'Hamad Town'][($id - 1) % 5],
+        $city = ['Manama', 'Muharraq', 'Riffa', 'Isa Town', 'Hamad Town'][($id - 1) % 5];
+
+        return ['id' => $id, 'code' => sprintf('SYN-%02d', $id),
+            'name' => $city.' '.self::CLINIC_TYPES[intdiv($id - 1, 5)], 'city' => $city,
             'timezone' => 'Asia/Bahrain', 'is_active' => true,
             'created_at' => $this->rangeStart, 'updated_at' => $this->rangeStart];
     }
@@ -51,14 +77,14 @@ class ClinicSeedGenerator
     public function doctor(int $id): array
     {
         return ['id' => $id, 'branch_id' => intdiv($id - 1, 40) + 1,
-            'name' => 'Dr Synthetic '.$id, 'specialty' => ['General Practice', 'Cardiology', 'Pediatrics', 'Dermatology'][($id - 1) % 4],
+            'name' => 'Dr '.$this->personName($id),
+            'specialty' => self::SPECIALTIES[($id - 1) % count(self::SPECIALTIES)],
             'is_active' => true, 'created_at' => $this->rangeStart, 'updated_at' => $this->rangeStart];
     }
 
     /** @return array<string, int|string> */
     public function patient(int $id): array
     {
-        $names = ['Ali', 'Fatima', 'Ahmed', 'Mariam', 'Hassan', 'Noor', 'Yusuf', 'Sara'];
         $day = (($id - 1) * 7919 + $this->seed) % 33238;
         $birthTime = strtotime('1930-01-01 UTC') + $day * 86400;
         $suffixIndex = intdiv($id - 1, 33238) * 31 + (int) gmdate('d', $birthTime) - 1;
@@ -66,11 +92,18 @@ class ClinicSeedGenerator
         $phoneDigits = sprintf('%07d', crc32($this->seed.':phone:'.$id) % 10000000);
 
         return ['id' => $id, 'mrn' => sprintf('SYN%010d', $id), 'cpr' => $cpr,
-            'name' => $names[($id - 1) % 8].' Synthetic '.$id,
+            'name' => $this->personName($id),
             'phone' => '+9733'.$phoneDigits,
             'dob' => gmdate('Y-m-d', $birthTime),
             'gender' => $id % 2 === 0 ? 'female' : 'male',
             'created_at' => $this->rangeStart, 'updated_at' => $this->rangeStart];
+    }
+
+    private function personName(int $id): string
+    {
+        $index = $id - 1;
+
+        return self::FIRST_NAMES[$index % 32].' '.self::LAST_NAMES[($index * 13 + intdiv($index, 32)) % 32];
     }
 
     /** @return array{patient_id: int, sequence: int} */

@@ -45,7 +45,7 @@ class ExportVisits implements ShouldQueue
                     });
                 });
             }
-            $rows = $query->with(['doctor:id,name','branch:id,name'])->limit(1000)->get();
+            $rows = $query->with(['patient:id,name', 'doctor:id,name', 'branch:id,name'])->limit(1000)->get();
             if ($rows->isEmpty()) {
                 break;
             }
@@ -98,13 +98,11 @@ class ExportVisits implements ShouldQueue
             foreach ($rows as $visit) {
                 fputcsv($stream, [
                     $visit->id,
-                    $visit->patient_id,
-                    $visit->doctor_id,
-                    $visit->branch_id,
-                    $visit->visit_date->format('Y-m-d H:i:s'),
-                    $visit->status,
+                    $this->safe($visit->patient->name),
                     $this->safe($visit->doctor->name),
                     $this->safe($visit->branch->name),
+                    $visit->visit_date->format('Y-m-d H:i:s'),
+                    $visit->status,
                 ]);
             }
             rewind($stream);
@@ -121,7 +119,7 @@ class ExportVisits implements ShouldQueue
         $disk = Storage::disk();
         $stream = fopen('php://temp/maxmemory:2097152', 'w+b');
         try {
-            fputcsv($stream, ['visit_id', 'patient_id', 'doctor_id', 'branch_id', 'visit_date_utc', 'status', 'doctor', 'branch']);
+            fputcsv($stream, ['visit_id', 'patient_name', 'doctor_name', 'branch_name', 'visit_date_utc', 'status']);
             for ($part = 1; $part <= $export->parts; $part++) {
                 $key = dirname($export->object_key).'/parts/'.sprintf('%08d', $part).'.csv';
                 $source = $disk->readStream($key);
