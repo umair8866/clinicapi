@@ -95,6 +95,10 @@ class AssessmentApiTest extends TestCase
         $this->assertDatabaseCount('idempotency_keys', 1);
         $report = $this->withToken($token)->getJson('/api/reports/revenue?from=2026-01-01&to=2026-01-31&group_by=branch');
         $report->assertOk()->assertJsonPath('data.0.net', '10.450')->assertJsonPath('data.0.outstanding', '10.450');
+        $this->withToken($token)
+            ->getJson('/api/reports/revenue?from=2025-01-01&to=2026-12-31&group_by=branch')
+            ->assertOk()
+            ->assertJsonPath('data.0.net', '10.450');
     }
 
     public function test_changed_idempotency_payload_conflicts_without_another_visit(): void
