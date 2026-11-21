@@ -12,7 +12,7 @@ class SeedClinicData extends Command
     protected $signature = 'data:seed
         {--patients=1000000 : Number of synthetic patients}
         {--visits=5000000 : Number of synthetic visits, at least twice the patients}
-        {--batch=1000 : Visits or parent rows per transaction, maximum 1000}
+        {--batch=5000 : Visits or parent rows per transaction, maximum 5000}
         {--seed=1729 : Deterministic generator seed}
         {--max-batches=0 : Stop after this many committed batches; zero runs to completion}';
 

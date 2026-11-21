@@ -47,6 +47,21 @@ class ClinicSeedResumeTest extends TestCase
         $this->assertSame($result, $again);
     }
 
+    public function test_large_batch_inserts_child_rows_in_bounded_statements(): void
+    {
+        $result = (new ClinicSeedService())->run(
+            ['patients' => 100, 'visits' => 1500, 'batch' => 5000, 'seed' => 1729],
+            0,
+            static function (array $state): void {
+            },
+        );
+
+        $this->assertSame('done', $result['status']);
+        $this->assertDatabaseCount('visits', 1500);
+        $this->assertDatabaseCount('invoice_items', 4500);
+        $this->assertDatabaseCount('payments', 1200);
+    }
+
     public function test_failure_during_batch_rolls_back_rows_summaries_and_checkpoint(): void
     {
         $service = new ClinicSeedService();

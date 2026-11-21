@@ -24,8 +24,8 @@ class ClinicSeedService
         if (! in_array($db->getDriverName(), ['mysql', 'mariadb'], true)) {
             throw new RuntimeException('Use a dedicated MySQL/MariaDB synthetic-data database.');
         }
-        if ($options['batch'] < 1 || $options['batch'] > 1000 || $maxBatches < 0) {
-            throw new RuntimeException('Batch must be 1..1000; max-batches must be nonnegative.');
+        if ($options['batch'] < 1 || $options['batch'] > 5000 || $maxBatches < 0) {
+            throw new RuntimeException('Batch must be 1..5000; max-batches must be nonnegative.');
         }
         $db->disableQueryLog();
         $lock = 'clinic-seed:'.substr(hash('sha256', $db->getDatabaseName()), 0, 40);
@@ -81,8 +81,8 @@ class ClinicSeedService
                             }
                         }
                         foreach ($rows as $table => $records) {
-                            if ($records !== []) {
-                                $db->table($table)->insert($records);
+                            for ($offset = 0; $offset < count($records); $offset += 4000) {
+                                $db->table($table)->insert(array_slice($records, $offset, 4000));
                             }
                             $counts[$table] += count($records);
                         }
